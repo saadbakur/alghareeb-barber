@@ -39,6 +39,13 @@ footer{text-align:center;color:var(--muted);padding:24px 0 90px;font-size:.9rem}
 .wa{position:fixed;inset-inline-start:16px;bottom:calc(16px + env(safe-area-inset-bottom,0px));background:#25d366;color:#fff;width:56px;height:56px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:1.7rem;text-decoration:none;box-shadow:0 6px 18px rgba(0,0,0,.25);z-index:10}
 .logo{width:170px;height:170px;border-radius:50%;border:3px solid var(--gold);box-shadow:0 0 28px rgba(217,169,79,.35);margin-bottom:8px}
 :root:root:root{--bg:#0f0e0c;--surface:#1a1814;--text:#f3ede2;--muted:#a89f90;--gold:#d9a94f;--gold-soft:#1b1710;--border:#2d2920;--hero:#000;--herotext:#f3ede2;color-scheme:dark}
+.hint{color:var(--muted);font-size:.9rem}
+.slots{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+.slot{padding:9px 0;border:1px solid var(--border);border-radius:10px;background:var(--bg);color:var(--text);font:inherit;cursor:pointer;direction:ltr}
+.slot.on{background:var(--gold);color:#1a1510;border-color:var(--gold);font-weight:700}
+.slot.off{opacity:.35;cursor:not-allowed;text-decoration:line-through}
+.done{display:none;text-align:center;border:1px solid var(--gold);border-radius:12px;padding:12px}
+.done a{display:inline-block;margin-top:8px;background:#25d366;color:#fff;padding:10px 20px;border-radius:999px;text-decoration:none;font-weight:700}
 </style>
 </head>
 <body>
@@ -65,19 +72,23 @@ footer{text-align:center;color:var(--muted);padding:24px 0 90px;font-size:.9rem}
 </div></section>
 
 <section id="book"><div class="wrap">
-<h2>احجز عبر واتساب</h2><div class="line"></div>
+<h2>احجز موعدك</h2><div class="line"></div>
 <div class="book">
 <input id="n" placeholder="اسمك">
 <select id="sv"></select>
 <input type="date" id="d">
-<input type="time" id="t">
-<button class="btn" id="go">أرسل الحجز</button>
+<div class="hint">اختر الوقت (الرمادي ممتلئ أو انتهى)</div>
+<div class="slots" id="slots"></div>
+<button class="btn" id="go">احجز</button>
+<div class="done" id="done"></div>
 </div>
 </div></section>
 
 <footer id="foot"></footer>
 <a class="wa" id="wa" target="_blank" rel="noopener" aria-label="واتساب">💬</a>
 
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 <script>
 /* ===== عدّل هذا القسم فقط لكل زبون ===== */
 var CONFIG={
@@ -118,12 +129,55 @@ CONFIG.services.forEach(function(s){
   box.appendChild(e);
   var o=document.createElement("option");o.value=s.n;o.textContent=s.n+" – "+s.p+" "+CONFIG.currency;sel.appendChild(o);
 });
+/* ===== نظام الحجز (Firebase) ===== */
+var FIREBASE_CONFIG={apiKey:"",authDomain:"",projectId:"",appId:""};
+var BK={open:9,close:24,step:30,cap:2,days:14}; /* من 9 صباحاً حتى 12 ليلاً، حجزان لكل وقت */
+var db=null;
+try{if(FIREBASE_CONFIG.projectId){firebase.initializeApp(FIREBASE_CONFIG);db=firebase.firestore()}}catch(e){db=null}
+var dEl=document.getElementById("d"),sl=document.getElementById("slots"),dn=document.getElementById("done"),pick="",counts={};
+function pad(n){return (n<10?"0":"")+n}
+function iso(x){return x.getFullYear()+"-"+pad(x.getMonth()+1)+"-"+pad(x.getDate())}
+var now0=new Date(),mx=new Date();mx.setDate(mx.getDate()+BK.days);
+dEl.min=iso(now0);dEl.max=iso(mx);dEl.value=iso(now0);
+function times(){var a=[];for(var m=BK.open*60;m<BK.close*60;m+=BK.step)a.push(pad(Math.floor(m/60))+":"+pad(m%60));return a}
+function draw(){
+  sl.innerHTML="";var now=new Date(),td=dEl.value===iso(now);
+  times().forEach(function(t){
+    var past=false;if(td){var p=t.split(":"),x=new Date();x.setHours(+p[0],+p[1],0,0);past=x<=now}
+    var full=(counts[t]||0)>=BK.cap,b=document.createElement("button");
+    b.className="slot"+(t===pick?" on":"");b.textContent=t;
+    if(full||past){b.disabled=true;b.className+=" off"}
+    b.onclick=function(){pick=t;draw()};
+    sl.appendChild(b);
+  });
+}
+function load(){
+  pick="";dn.style.display="none";counts={};
+  if(!dEl.value||!db){draw();return}
+  db.collection("slots").where("date","==",dEl.value).get().then(function(q){q.forEach(function(x){counts[x.data().time]=x.data().count});draw()}).catch(function(){draw()});
+}
+dEl.onchange=load;
 document.getElementById("go").onclick=function(){
-  var n=document.getElementById("n").value.trim(),d=document.getElementById("d").value,t=document.getElementById("t").value;
-  if(!n||!d||!t){alert("الرجاء تعبئة الاسم والتاريخ والوقت");return}
-  var msg="مرحباً، أريد حجز موعد\nالاسم: "+n+"\nالخدمة: "+sel.value+"\nالتاريخ: "+d+"\nالوقت: "+t;
-  window.open("https://wa.me/"+CONFIG.phone+"?text="+encodeURIComponent(msg),"_blank");
+  var n=document.getElementById("n").value.trim(),d=dEl.value,btn=this;
+  if(!n||!d||!pick){alert("الرجاء كتابة الاسم واختيار التاريخ والوقت");return}
+  var t=pick;
+  function ok(){
+    var msg="مرحباً، أريد تأكيد حجز موعد\nالاسم: "+n+"\nالخدمة: "+sel.value+"\nالتاريخ: "+d+"\nالوقت: "+t;
+    dn.innerHTML="✅ تم حجز موعدك. اضغط الزر لإرسال التفاصيل إلى الصالون:<br><a target=\"_blank\" rel=\"noopener\" href=\"https://wa.me/"+CONFIG.phone+"?text="+encodeURIComponent(msg)+"\">إرسال عبر واتساب</a>";
+    dn.style.display="block";
+  }
+  if(!db){ok();return}
+  btn.disabled=true;
+  var ref=db.collection("slots").doc(d+"_"+t.replace(":",""));
+  db.runTransaction(function(tr){return tr.get(ref).then(function(s){
+    var c=s.exists?s.data().count:0;
+    if(c>=BK.cap)throw new Error("full");
+    if(s.exists)tr.update(ref,{count:c+1});else tr.set(ref,{date:d,time:t,count:1});
+  })}).then(function(){ok();var c=counts[t]||0;counts[t]=c+1;pick="";draw()})
+  .catch(function(e){alert(e.message==="full"?"عذراً، هذا الوقت امتلأ للتو. اختر وقتاً آخر.":"تعذّر إتمام الحجز، حاول مرة أخرى.");load()})
+  .then(function(){btn.disabled=false});
 };
+load();
 </script>
 </body>
 </html>
